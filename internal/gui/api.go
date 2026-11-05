@@ -577,12 +577,14 @@ type searchAPIJSON struct {
 	Key    string `json:"key,omitempty"` // masked
 	URL    string `json:"url,omitempty"`
 	Ready  bool   `json:"ready"`
-	// Keys is how many keys it has, Pick how a search picks among them
+	// Keys is how many keys it has, KeyList each key masked (with its
+	// rest if a search set it aside), Pick how a search picks among them
 	// (provider.SearchPick*), and Quota whether what each has left can be
 	// read (gateway.SearchQuotas)
-	Keys  int    `json:"keys,omitempty"`
-	Pick  string `json:"pick,omitempty"`
-	Quota bool   `json:"quota,omitempty"`
+	Keys    int                      `json:"keys,omitempty"`
+	KeyList []gateway.SearchKeyQuota `json:"keyList,omitempty"`
+	Pick    string                   `json:"pick,omitempty"`
+	Quota   bool                     `json:"quota,omitempty"`
 	// Off: switched off, kept but never asked (#2286)
 	Off bool `json:"off,omitempty"`
 }
@@ -629,6 +631,21 @@ type searchAuthJSON struct {
 	On       int    `json:"on"`
 }
 
+// An absent reference selects the API; an explicit empty or null one is invalid.
+func searchKeyRef(raw json.RawMessage) (string, error) {
+	if raw == nil {
+		return "", nil
+	}
+	var ref string
+	if err := json.Unmarshal(raw, &ref); err != nil {
+		return "", err
+	}
+	if ref == "" {
+		return "", errors.New("no search key selected; reload Settings and try again")
+	}
+	return ref, nil
+}
+
 func searchState(s *settingsJSON) {
 	names := map[string]string{}
 	for _, e := range provider.Served() {
@@ -636,7 +653,7 @@ func searchState(s *settingsJSON) {
 	}
 	s.SearchAPIs, s.SearchVendors = []searchAPIJSON{}, []searchVendorJSON{}
 	for _, a := range provider.StoredSearchAPIs() {
-		j := searchAPIJSON{Vendor: a.Vendor, Name: a.Name(), URL: a.URL, Ready: a.Ready(), Keys: len(a.Keys()), Pick: a.Pick, Quota: gateway.CanReadSearchQuota(a), Off: a.Off}
+		j := searchAPIJSON{Vendor: a.Vendor, Name: a.Name(), URL: a.URL, Ready: a.Ready(), Keys: len(a.Keys()), KeyList: gateway.SearchKeyStates(a), Pick: a.Pick, Quota: gateway.CanReadSearchQuota(a), Off: a.Off}
 		if a.Key != "" {
 			j.Key = a.MaskedKey()
 		}
@@ -2519,28 +2536,52 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		writeJSON(rw, settingsState())
 	})
 	// a web search API added, given a new key or address, switched on or
-	// off, or taken away; or the APIs put in a new order (#2286)
+	// off, or taken away; one of its keys replaced or taken away (#4597);
+	// or the APIs put in a new order (#2286)
 	mux.HandleFunc("POST /api/settings/search-api", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Vendor, Key, URL, Pick string
-			Remove                 bool
-			On                     *bool
-			Arrange                []string
+			Vendor, Key, Pick string
+			URL               *string
+			Ref, At           json.RawMessage
+			Remove            bool
+			On                *bool
+			Arrange           []string
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(rw, err)
 			return
 		}
-		var err error
+		ref, err := searchKeyRef(in.Ref)
+		if err != nil {
+			fail(rw, err)
+			return
+		}
 		switch {
+		case in.At != nil:
+			err = errors.New("reload Settings before using these search keys")
 		case in.Arrange != nil:
 			err = provider.ArrangeSearchAPIs(in.Arrange)
+		case in.Remove && in.Ref != nil:
+			err = provider.RemoveSearchAPIKey(in.Vendor, ref)
 		case in.Remove:
 			err = provider.RemoveSearchAPI(in.Vendor)
+		case in.Ref != nil:
+			err = provider.ReplaceSearchAPIKey(in.Vendor, ref, in.Key)
 		case in.On != nil:
 			err = provider.SwitchSearchAPI(in.Vendor, *in.On)
 		default:
-			err = provider.SetSearchAPI(provider.SearchAPI{Vendor: in.Vendor, Key: in.Key, URL: in.URL, Pick: in.Pick})
+			a := provider.SearchAPI{Vendor: strings.ToLower(strings.TrimSpace(in.Vendor)), Key: in.Key, Pick: in.Pick}
+			if in.URL != nil {
+				a.URL = *in.URL
+			} else {
+				for _, saved := range provider.StoredSearchAPIs() {
+					if saved.Vendor == a.Vendor {
+						a.URL = saved.URL
+						break
+					}
+				}
+			}
+			err = provider.AddSearchAPI(a)
 		}
 		if err != nil {
 			fail(rw, err)
@@ -2548,17 +2589,36 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, settingsState())
 	})
-	// a search API's saved key, for its row's Show button (OnurBen on
-	// Discord); like a provider's, it never leaves this machine
+	// A missing ref reveals the complete saved list for the API's Show/Copy.
 	mux.HandleFunc("POST /api/settings/search-key", func(rw http.ResponseWriter, r *http.Request) {
-		var in struct{ Vendor string }
+		var in struct {
+			Vendor  string
+			Ref, At json.RawMessage
+		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if in.At != nil {
+			fail(rw, errors.New("reload Settings before using these search keys"))
+			return
+		}
+		ref, err := searchKeyRef(in.Ref)
+		if err != nil {
 			fail(rw, err)
 			return
 		}
 		for _, a := range provider.StoredSearchAPIs() {
 			if a.Vendor == in.Vendor {
-				writeJSON(rw, map[string]string{"key": a.Key})
+				key := a.Key
+				if in.Ref != nil {
+					key, err = a.KeyOf(ref)
+					if err != nil {
+						fail(rw, err)
+						return
+					}
+				}
+				writeJSON(rw, map[string]string{"key": key})
 				return
 			}
 		}

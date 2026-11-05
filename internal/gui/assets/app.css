@@ -3878,13 +3878,19 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
 /* a search API's keys and what each has used of its limit */
 /* how its searches pick a key, and Check again: wrapped, right-aligned, on a
    narrow window in a long language rather than past its edge */
-.row.pref.search-keys .val { flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
-.search-quota { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-size: 12px; min-width: 0; }
-.search-quota .quota-key { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
-.search-quota code { font-family: var(--code-font, var(--code)); color: var(--muted); }
-.search-quota .faint { color: var(--muted); overflow-wrap: anywhere; }
-.search-quota .err { color: var(--red); overflow-wrap: anywhere; }
-.search-quota .warn { color: var(--amber); }
+.row.pref.search-keys { flex-wrap: wrap; row-gap: 8px; }
+.row.pref.search-keys .who { flex: 1 1 180px; min-width: 0; }
+.row.pref.search-keys .val { margin-left: auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.search-quota.accts.keys { flex: 1 1 100%; width: 100%; min-width: 0; font-size: 12.5px; }
+.search-quota .quota-key code.n { font-family: var(--code-font, var(--code)); font-size: 11.5px; font-weight: 450; color: var(--fg); }
+.search-quota .used { font-size: 12px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.search-quota .faint { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.search-quota .err { font-size: 12px; color: var(--red); overflow-wrap: anywhere; }
+.search-quota .warn { font-size: 11.5px; color: var(--amber); }
+.search-quota .quota-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 9px; min-width: 0; max-width: 100%; }
+.search-quota .quota-detail:empty { display: none; }
+.search-quota .acc.adding input.words { width: 100%; box-sizing: border-box; }
+.search-quota .acc.adding .kb { flex-wrap: wrap; }
 .prefs .val.rule-add .segs { margin-left: 0; }
 /* a search API and its keys' row, dragged as one into the order they are
    asked in (#2286); its grip shows only under the pointer, and one
@@ -3898,10 +3904,10 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
 .search-unit:focus-visible > .grip { opacity: 1; }
 @media (hover: none) { .search-unit > .grip { opacity: 1; } }
 .search-unit .row .sub.revealed, .search-unit code { cursor: text; }
-.search-unit .row .val button { cursor: pointer; }
+.search-unit .row .val button, .search-unit .search-quota button { cursor: pointer; }
 #searchList.sorting .search-unit { transition: transform .22s cubic-bezier(.22, 1, .36, 1); cursor: grabbing; }
 #searchList .search-unit.dragging { z-index: 2; transition: none; box-shadow: 0 6px 18px rgba(20, 22, 30, .12), 0 0 0 1px var(--line); }
-.search-unit.off .row .who, .search-unit.off .search-keys .val { opacity: .5; }
+.search-unit.off .row .who, .search-unit.off .search-keys .val, .search-unit.off .search-quota { opacity: .5; }
 /* its buttons and switch: the whole row's width when it needs it, and
    wrapped under each other rather than past the window's edge */
 .prefs .row.pref.search-api .val { max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }

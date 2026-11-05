@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ const searchUsage = `usage:
   magpie search off <api>                    keep one, key and all, but never ask it
   magpie search on <api>                     ask it again
   magpie search move <api> <n>               put one at place n in the order they are asked
-  magpie search rm <api>                     take one away
+  magpie search rm <api> [<n>]               take one, or its key n, away
 
   apis: tavily, brave, exa, firecrawl, you, deepseek, volcengine, wsa, searxng
         and the ones a plugin gives (its search hook), as <plugin>:<id> in magpie's Settings
@@ -158,8 +159,29 @@ func searchCmd(args []string) error {
 		fmt.Println(green.Render("✓"), as[i].Name(), muted.Render(fmt.Sprintf("search API %d of %d", n, len(as))))
 		return nil
 	case "rm", "remove":
+		if len(args) == 3 {
+			n, err := strconv.Atoi(args[2])
+			if err != nil || n < 1 {
+				return fmt.Errorf("magpie search rm <api> [<n>]")
+			}
+			vendor := strings.ToLower(strings.TrimSpace(args[1]))
+			as := provider.StoredSearchAPIs()
+			i := slices.IndexFunc(as, func(a provider.SearchAPI) bool { return a.Vendor == vendor })
+			if i < 0 {
+				return fmt.Errorf("no %s search API is set up", vendor)
+			}
+			keys := as[i].Keys()
+			if n > len(keys) {
+				return fmt.Errorf("%s: no key %d", as[i].Name(), n)
+			}
+			if err := provider.RemoveSearchAPIKey(vendor, provider.KeyID(keys[n-1])); err != nil {
+				return err
+			}
+			fmt.Println(green.Render("✓"), "removed")
+			return nil
+		}
 		if len(args) != 2 {
-			return fmt.Errorf("magpie search rm <api>")
+			return fmt.Errorf("magpie search rm <api> [<n>]")
 		}
 		if err := provider.RemoveSearchAPI(strings.ToLower(args[1])); err != nil {
 			return err

@@ -331,6 +331,12 @@ func TestSearchQuotas(t *testing.T) {
 	if len(qs) != 3 {
 		t.Fatalf("%d quotas for 3 keys", len(qs))
 	}
+	states := SearchKeyStates(a)
+	for i, key := range a.Keys() {
+		if qs[i].ID != provider.KeyID(key) || states[i].ID != qs[i].ID || states[i].Resting != qs[i].Resting {
+			t.Errorf("quota and saved key identity/rest differ: quota=%+v state=%+v", qs[i], states[i])
+		}
+	}
 	if q := qs[0]; q.Key != "tvly-…1234" || !q.Known || q.Used != 150 || q.Limit != 1000 || q.UsedUp || q.Resting != "" {
 		t.Errorf("good: %+v", q)
 	}

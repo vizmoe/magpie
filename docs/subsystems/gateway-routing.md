@@ -1613,15 +1613,28 @@ or a reply missing those fields is unknown, with why, never 0 used. A read
 is kept two minutes (Tavily allows /usage 10 times in 10 minutes) unless
 asked fresh. A key at its limit with no pay-as-you-go credit left rests an
 hour as "used up"; a later read that finds credit wakes a key resting for
-that or for being out of credit. Settings › Models › Web search shows a row
-of the keys under an API with several or with Tavily's (In turn / In order,
-each key masked with what it has used, Check again), and `magpie search`
-lists the same, read fresh.
+that or for being out of credit. Settings › Models › Web search lists each
+saved key, including a single key, with its rest or quota when available.
+Adding keys appends without replacing those already saved (#4597); changing
+one key keeps its place and rejects a value already used by another key.
+The list and its controls remain available while quota reads load or fail.
+Quota responses carry the same key fingerprints as Settings, so usage is
+matched to the saved key and an older response cannot replace the list.
+See [the Settings controls](gui-shell.md).
+
+Per-key Copy, Change key and Remove use a stable key fingerprint (`ref`),
+not its position. A reference to a key that no longer exists is refused;
+removing an earlier key cannot change the target. The API's Show/Copy with no
+reference still returns its whole saved list. `magpie search rm <api> <n>`
+takes away the key at the positive, one-based position `n`, resolving its
+fingerprint before removing it. Removing the final key removes a key-required API;
+a key-optional API keeps its address and other settings.
 
 Covered by `TestReadTavilyUsage`, `TestSearchKeysTakeTurnsRoundRobin`,
 `TestSearchKeyRefusedRests`, `TestSearchRestFor`, `TestSearchQuotas`,
-`TestSearchKeyNeverInFull`, `TestSearchAPIKeysTakeTurns` and
-`search-keys.test.cjs`.
+`TestSearchKeyNeverInFull`, `TestSearchAPIKeysTakeTurns`,
+`TestSearchAPIKeysFromSettings`, `TestSearchAPIKeyReference`,
+`search-keys.test.cjs` and `search-keys-state.test.cjs`.
 
 ## A search API's asks in the request log
 

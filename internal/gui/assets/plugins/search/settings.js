@@ -11,6 +11,7 @@
 // runs (SearXNG). They are set on their own; one magpie refuses is said in
 // the row, what was typed kept.
 let searchDraft = { vendor: "tavily", key: "", url: "", err: "" };
+let searchAddingKey = null;
 function renderSearch(s, keep) {
   const box = $("#searchList");
   box.replaceChildren();
@@ -63,7 +64,7 @@ function renderSearch(s, keep) {
     url.placeholder = v.needURL ? "https://searx.example.com" : t("Base URL, empty for {url}", { url: v.base || "" });
     url.setAttribute("aria-label", v.needURL ? t("Address") : t("Base URL"));
     key.placeholder = v.needURL ? t("API key, if it needs one")
-      : saved()?.key ? t("A new key, or empty to keep {key}", { key: saved().key })
+      : saved()?.key ? t("Add a key (or several, split by commas), or empty to keep {key}", { key: saved().key })
       : v.keyOptional ? t("API key, or empty for its free search")
       : t("API key, or several split by commas");
     get.hidden = !v.keysURL || !!v.auth;
@@ -131,7 +132,7 @@ function renderSearch(s, keep) {
           sub.classList.add("revealed");
           eye.textContent = t("Hide");
         } else {
-          sub.textContent = what;
+          sub.textContent = a.off ? [t("Off"), what].filter(Boolean).join(" · ") : what;
           sub.classList.remove("revealed");
           eye.textContent = t("Show");
         }
@@ -158,9 +159,10 @@ function renderSearch(s, keep) {
     tools.push(sw);
     const r = row(`${n + 1}. ${a.name}`, a.off ? [t("Off"), what].filter(Boolean).join(" · ") : what, ...tools);
     r.classList.add("search-api");
+    r.querySelector(".sub").classList.add("say");
     if (auth && !a.off && !(auth.signedIn && auth.on)) r.querySelector(".sub").classList.add("err");
     // with-keys, not :has(), which Safari before 15.4 can't parse
-    if (a.keys > 1 || a.quota) { unit.classList.add("with-keys"); searchKeysRow(s, a, row, set); }
+    if (a.keys > 1 || a.keyList?.length || a.quota) { unit.classList.add("with-keys"); searchKeysRow(s, a, row, set); }
     into = box;
   });
   searchArrange(box, units, set);
@@ -257,52 +259,215 @@ function searchArrange(box, units, set) {
   }
 }
 
-// searchKeysRow: under a search API with several keys, or one whose keys
-// quota magpie can read (Tavily's), a row of its keys (SlouchyQuill on
-// Discord): how a search picks among them, in turn (the default) or in
-// order, and what each has used of its limit, read once as the page is
-// drawn and again on Check again. A read that fails says unknown and why,
-// never 0; a key a search set aside lately says why and until when.
+// searchRestNote is why a key is asked last, and until when.
+function searchRestNote(q) {
+  return q?.resting ? t("asked last until {time}: {why}", { time: hhmm(q.restUntil),
+    why: { "turned away": t("turned away"), "out of credit": t("out of credit"), "rate limited": t("rate limited"), "used up": t("used up") }[q.resting] || q.resting }) : "";
+}
+
+// searchKeysRow: under a keyed search API, a row of its keys (SlouchyQuill
+// on Discord; #4597), laid out as Providers' .accts.keys box is: how a
+// search picks among several keys, in turn (the default) or in order; what
+// each Tavily key has used of its limit, read once as the page is drawn and
+// again on Check again; per-key Copy, Change key (pencil) and Remove; and
+// Add another key at the foot.
 const searchQuotaSeen = {};
 function searchKeysRow(s, a, row, set) {
+  const v = (s.searchVendors || []).find((x) => x.id === a.vendor) || {};
   const tools = [];
   if (a.keys > 1) tools.push(segs([["", t("In turn")], ["order", t("In order")]], a.pick || "",
     (v) => set({ vendor: a.vendor, pick: v || "turns" })));
-  const mine = el("div", "search-quota");
-  const seenAs = [a.key, a.url].join(" ");
-  const ask = (fresh) => {
-    searchQuotaSeen[a.vendor] = { as: seenAs, loading: true };
-    draw();
-    api("settings/search-quota", { vendor: a.vendor, fresh })
-      .then((r) => { searchQuotaSeen[a.vendor] = { as: seenAs, keys: r.keys || [] }; })
-      .catch((e) => { searchQuotaSeen[a.vendor] = { as: seenAs, err: e.message }; })
-      .finally(draw);
-  };
-  // the list in the page now: Settings may have been drawn again while
-  // the read was out
-  const draw = () => {
-    const list = document.querySelector(`.search-keys[data-vendor="${a.vendor}"] .search-quota`) || mine;
-    const seen = searchQuotaSeen[a.vendor];
-    list.replaceChildren();
-    if (!seen || seen.loading) return list.append(el("div", "faint", t("Reading what each key has used…")));
-    if (seen.err) return list.append(el("div", "err", t("Unknown: {why}", { why: seen.err })));
+  const mine = el("div", "accts keys search-quota");
+  const items = a.keyList?.length ? a.keyList : (a.key ? a.key.split(", ").filter(Boolean).map((key) => ({ key })) : []);
+  const seenAs = JSON.stringify([a.url || "", items.map((q) => q.id || q.key)]);
+  const drawQuota = () => {
+    const cached = searchQuotaSeen[a.vendor];
+    const seen = cached?.as === seenAs ? cached : null;
     const num = (n) => Number(n).toLocaleString(intlLang());
-    for (const q of seen.keys) {
-      const line = el("div", "quota-key");
-      const said = !q.known ? t("Unknown: {why}", { why: q.err || "" })
-        : q.unlimited ? t("{used} used, no limit", { used: num(q.used) })
-        : t("{used} of {limit} used", { used: num(q.used), limit: num(q.limit) });
+    mine.querySelectorAll(".quota-detail").forEach((detail, i) => {
+      const key = items[i];
+      const q = (key.id && seen?.keys?.find((q) => q.id === key.id)) || key;
+      detail.replaceChildren();
+      if (a.quota) {
+        if (!seen || seen.loading) detail.append(el("span", "faint", t("Reading what each key has used…")));
+        else if (seen.err) detail.append(el("span", "err", t("Unknown: {why}", { why: seen.err })));
+        else {
+          const said = !q.known ? t("Unknown: {why}", { why: q.err || "" })
+            : q.unlimited ? t("{used} used, no limit", { used: num(q.used) })
+            : t("{used} of {limit} used", { used: num(q.used), limit: num(q.limit) });
+          detail.append(el("span", q.known ? (q.usedUp ? "used warn" : "used") : "used err", said));
+          if (q.usedUp) detail.append(el("span", "warn", t("used up")));
+        }
+      }
       const notes = [];
       if (q.known && q.of === "plan") notes.push(q.plan ? t("{plan} plan, shared by its account's keys", { plan: q.plan }) : t("the plan's, shared by its account's keys"));
       if (q.paygoLeft > 0) notes.push(t("{n} pay-as-you-go left", { n: num(q.paygoLeft) }));
-      if (q.resting) notes.push(t("asked last until {time}: {why}", { time: hhmm(q.restUntil),
-        why: { "turned away": t("turned away"), "out of credit": t("out of credit"), "rate limited": t("rate limited"), "used up": t("used up") }[q.resting] || q.resting }));
-      const used = el("span", q.known ? (q.usedUp ? "used warn" : "used") : "used err", said);
-      line.append(el("code", "", q.key), used);
-      if (q.usedUp) line.append(el("span", "warn", t("used up")));
-      if (notes.length) line.append(el("span", "faint", notes.join(" · ")));
+      if (q.resting) notes.push(searchRestNote(q));
+      if (notes.length) detail.append(el("span", "faint", notes.join(" · ")));
+    });
+  };
+  const ask = (fresh) => {
+    const seen = { as: seenAs, loading: true, draw: drawQuota };
+    searchQuotaSeen[a.vendor] = seen;
+    drawQuota();
+    api("settings/search-quota", { vendor: a.vendor, fresh })
+      .then((r) => { seen.keys = r.keys || []; })
+      .catch((e) => { seen.err = e.message; })
+      .finally(() => {
+        seen.loading = false;
+        if (searchQuotaSeen[a.vendor] === seen) seen.draw();
+      });
+  };
+  const draw = () => {
+    const list = mine;
+    list.replaceChildren();
+    const several = items.length > 1;
+    items.forEach((q) => {
+      const line = el("div", "acc in-use quota-key");
+      line.dataset.accountId = q.id || "";
+      const code = el("code", "n mono", q.key);
+      line.append(code);
+      const cp = el("button", "copy");
+      cp.type = "button";
+      cp.disabled = !q.id;
+      cp.title = t("Copy");
+      cp.setAttribute("aria-label", t("Copy"));
+      cp.append(svg(COPY_ICON, 12, 1.5));
+      cp.onclick = async (e) => {
+        e.stopPropagation();
+        try { copy((await api("settings/search-key", { vendor: a.vendor, ref: q.id })).key, q.key, cp); } catch (err) { status(err.message, "err"); }
+      };
+      const edit = el("button", "key-edit quota-key-edit");
+      edit.type = "button";
+      edit.disabled = !q.id;
+      edit.title = t("Paste a new value for this key; its name, place and settings stay");
+      edit.setAttribute("aria-label", t("Change key"));
+      edit.append(svg(PENCIL, 12, 1.4));
+      let doneEdit = null;
+      edit.onclick = (e) => {
+        e.stopPropagation();
+        if (edit.disabled) return;
+        if (doneEdit) { doneEdit(true); return; }
+        const inp = input("", t("Paste the key's new value"), "password");
+        inp.className = "rename-in key-value-in search-key-edit";
+        inp.setAttribute("aria-label", t("Change key"));
+        let over = false;
+        const done = (save) => {
+          if (over) return;
+          over = true;
+          doneEdit = null;
+          const val = inp.value.trim();
+          if (save && val) set({ vendor: a.vendor, ref: q.id, key: val });
+          else inp.replaceWith(code);
+        };
+        doneEdit = done;
+        inp.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter") done(true); else if (ev.key === "Escape") done(false); };
+        inp.onblur = () => done(!!inp.value.trim());
+        code.replaceWith(inp);
+        inp.focus(NO_SCROLL);
+      };
+      line.ondblclick = (e) => { if (!e.target.closest("button, input, textarea")) edit.onclick(e); };
+      line.append(cp, edit, el("span", "quota-detail"), el("span", "grow"));
+      const acts = el("span", "key-acts");
+      if (several) {
+        const rm = el("button", "text quota-key-rm", t("Remove"));
+        rm.type = "button";
+        rm.disabled = !q.id;
+        rm.onclick = () => {
+          rm.disabled = true;
+          set({ vendor: a.vendor, ref: q.id, remove: true });
+        };
+        acts.append(rm);
+      } else {
+        acts.append(el("span", "using", t("In use")));
+      }
+      line.append(acts);
       list.append(line);
+    });
+    if (searchAddingKey?.vendor === a.vendor && searchAddingKey.bulk) {
+      const box = el("div", "acc adding bulk");
+      const keys = el("textarea", "bulk-keys");
+      keys.value = searchAddingKey.key || "";
+      keys.rows = 4;
+      keys.spellcheck = false;
+      keys.placeholder = t("Paste the keys, one a line or separated by commas");
+      const count = el("span", "hint bulk-count");
+      const add = el("button", "text primary", t("Add"));
+      add.type = "button";
+      const counted = () => {
+        const n = splitKeys(keys.value).length;
+        count.textContent = n ? t(n === 1 ? "1 key" : "{n} keys", { n }) : "";
+        add.disabled = !n;
+      };
+      keys.oninput = () => { searchAddingKey.key = keys.value; counted(); };
+      counted();
+      const go = () => {
+        const val = keys.value.trim();
+        if (!splitKeys(val).length || add.disabled) return;
+        add.disabled = true;
+        set({ vendor: a.vendor, key: val, url: a.url || "" }, () => { searchAddingKey = null; });
+      };
+      add.onclick = go;
+      keys.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) go(); else if (e.key === "Escape") { searchAddingKey = null; draw(); } };
+      const one = el("button", "link", t("Add one key"));
+      one.type = "button";
+      one.onclick = () => { searchAddingKey = { vendor: a.vendor, key: "" }; draw(); list.querySelector("input.search-key-add")?.focus(NO_SCROLL); };
+      const x = el("button", "text", t("Cancel"));
+      x.type = "button";
+      x.onclick = () => { searchAddingKey = null; draw(); };
+      const bar = el("div", "kb");
+      bar.append(one, count, el("span", "grow"), x, add);
+      box.append(keys, bar);
+      list.append(box);
+    } else if (searchAddingKey?.vendor === a.vendor) {
+      const box = el("div", "acc adding");
+      const inp = input(searchAddingKey.key || "", t("paste an API key"), "password");
+      inp.className = "words search-key-add";
+      inp.setAttribute("aria-label", t("API key"));
+      inp.oninput = () => { searchAddingKey.key = inp.value; };
+      inp.onpaste = (e) => {
+        const text = e.clipboardData?.getData("text") || "";
+        if (splitKeys(text).length < 2) return;
+        e.preventDefault();
+        searchAddingKey = { vendor: a.vendor, key: text, bulk: true };
+        draw();
+        list.querySelector("textarea.bulk-keys")?.focus(NO_SCROLL);
+      };
+      const add = el("button", "text primary", t("Add"));
+      add.type = "button";
+      const go = () => {
+        const val = inp.value.trim();
+        if (!val) return inp.focus(NO_SCROLL);
+        add.disabled = true;
+        set({ vendor: a.vendor, key: val, url: a.url || "" }, () => { searchAddingKey = null; });
+      };
+      add.onclick = go;
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") go(); else if (e.key === "Escape") { searchAddingKey = null; draw(); } };
+      const x = el("button", "text", t("Cancel"));
+      x.type = "button";
+      x.onclick = () => { searchAddingKey = null; draw(); };
+      const bar = el("div", "kb");
+      if (v.keysURL) {
+        const g = el("button", "link", t("Get a key ↗"));
+        g.type = "button";
+        g.onclick = () => api("open", { url: v.keysURL });
+        bar.append(g);
+      }
+      const many = el("button", "link", t("Paste several"));
+      many.type = "button";
+      many.title = t("Add many keys at once, one a line or separated by commas");
+      many.onclick = () => { searchAddingKey = { vendor: a.vendor, key: inp.value, bulk: true }; draw(); list.querySelector("textarea.bulk-keys")?.focus(NO_SCROLL); };
+      bar.append(many, el("span", "grow"), x, add);
+      box.append(inp, bar);
+      list.append(box);
+    } else {
+      list.append(addRow(t("Add another key"), () => {
+        searchAddingKey = { vendor: a.vendor, key: "" };
+        draw();
+        list.querySelector("input.search-key-add")?.focus(NO_SCROLL);
+      }));
     }
+    drawQuota();
   };
   if (a.quota) {
     const again = el("button", "text search-quota-again", t("Check again"));
@@ -310,15 +475,15 @@ function searchKeysRow(s, a, row, set) {
     tools.push(again);
   }
   const r = row(t("Keys of {name}", { name: a.name }),
-    a.keys > 1 ? t("In turn spreads searches over the keys; in order uses the first until it is refused. A key refused lately is asked last.") : t("What the key has used of its limit"),
+    a.keys > 1 || !a.quota ? t("In turn spreads searches over the keys; in order uses the first until it is refused. A key refused lately is asked last.") : t("What the key has used of its limit"),
     ...tools);
   r.classList.add("search-keys");
   r.dataset.vendor = a.vendor;
-  if (a.quota) {
-    r.querySelector(".who").append(mine);
-    if (searchQuotaSeen[a.vendor]?.as !== seenAs) ask(false);
-    else draw();
-  }
+  r.append(mine);
+  const seen = searchQuotaSeen[a.vendor];
+  if (seen?.as === seenAs) seen.draw = drawQuota;
+  draw();
+  if (a.quota && seen?.as !== seenAs) ask(false);
 }
 
 // renderSearcher: the provider that searches the web for a model that

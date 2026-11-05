@@ -28,9 +28,9 @@ const vendors = [
 ];
 const words = {
   en: { head: "Web search", name: "Search APIs", none: "No provider can search", add: "Add", remove: "Remove", refused: "Brave Search: 401 bad key", show: "Show", hide: "Hide", copy: "Copy",
-    base: "Base URL, empty for https://api.tavily.com", exaBase: "Base URL, empty for https://api.exa.ai", keep: "A new key, or empty to keep tvly…abcd", youKey: "API key, or empty for its free search" },
+    base: "Base URL, empty for https://api.tavily.com", exaBase: "Base URL, empty for https://api.exa.ai", keep: "Add a key (or several, split by commas), or empty to keep tvly…abcd", youKey: "API key, or empty for its free search" },
   zh: { head: "联网搜索", name: "搜索 API", none: "没有能搜索的供应商", add: "添加", remove: "移除", refused: "Brave Search: 401 bad key", show: "显示", hide: "隐藏", copy: "复制",
-    base: "API 地址，留空则用 https://api.tavily.com", exaBase: "API 地址，留空则用 https://api.exa.ai", keep: "新的密钥，留空则保留 tvly…abcd", youKey: "API 密钥，留空则用其免费搜索" },
+    base: "API 地址，留空则用 https://api.tavily.com", exaBase: "API 地址，留空则用 https://api.exa.ai", keep: "追加密钥（多个用逗号分隔），留空则保留 tvly…abcd", youKey: "API 密钥，留空则用其免费搜索" },
 };
 
 function serve(lang, posted) {
@@ -193,6 +193,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       const tavily = list.locator(".row.search-api").first();
       assert.equal(await list.locator(".row.search-api").nth(1).locator("button.search-eye").count(), 0);
       assert.equal(await tavily.locator(".sub").innerText(), "tvly…abcd");
+      assert.equal(await tavily.locator(".sub").evaluate((e) => { const b = e.getBoundingClientRect(); return b.width > 4 && b.height > 4; }), true, "the masked key is in sight at rest");
       const sent = posted.length;
       // the clicks so far moved nothing; Image generation timeout, drawn
       // above, puts the saved keys past the window's foot at 420, so the
