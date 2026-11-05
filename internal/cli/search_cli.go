@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -135,12 +136,13 @@ func searchCmd(args []string) error {
 		return nil
 	case "move", "mv":
 		n := 0
+		var parseErr error
 		if len(args) == 3 {
-			fmt.Sscan(args[2], &n)
+			n, parseErr = strconv.Atoi(args[2])
 		}
 		as := provider.StoredSearchAPIs()
 		i := slices.IndexFunc(as, func(x provider.SearchAPI) bool { return len(args) > 1 && x.Vendor == strings.ToLower(args[1]) })
-		if len(args) != 3 || n < 1 || n > len(as) {
+		if parseErr != nil || len(args) != 3 || n < 1 || n > len(as) {
 			return fmt.Errorf("magpie search move <api> <n>, n from 1 to %d", len(as))
 		}
 		if i < 0 {
