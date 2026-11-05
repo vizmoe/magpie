@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -128,5 +129,64 @@ func TestSearchAPIOrderAndOffFromSettings(t *testing.T) {
 	}
 	if as := provider.SearchAPIs(); len(as) != 2 || as[1].Vendor != "tavily" {
 		t.Fatalf("switched on %+v", as)
+	}
+}
+
+// Adding a key to a search API already in Settings keeps its earlier keys
+// and appends the new ones (#4597); each key is listed masked, and one key
+// can be replaced or removed in its place without touching the others.
+func TestSearchAPIKeysFromSettings(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
+	post := func(body map[string]any) *httptest.ResponseRecorder {
+		body["vendor"] = "exa"
+		return searchKeyPost(t, "search-api", body)
+	}
+	const first, second, third, replacement = "exa-first-00001111", "exa-second-00002222", "exa-third-00003333", "exa-replacement-00004444"
+	for _, key := range []string{first, second + ", " + third, third} {
+		if rec := post(map[string]any{"key": key}); rec.Code != 200 {
+			t.Fatalf("add: %d %s", rec.Code, rec.Body)
+		}
+	}
+	if got := provider.SearchAPIs()[0].Keys(); !slices.Equal(got, []string{first, second, third}) {
+		t.Fatalf("after Add, keys = %v, want all three kept in order", got)
+	}
+	rec := post(map[string]any{"ref": provider.KeyID(second), "key": replacement})
+	if rec.Code != 200 {
+		t.Fatalf("replace key 2: %d %s", rec.Code, rec.Body)
+	}
+	if got := provider.SearchAPIs()[0].Keys(); !slices.Equal(got, []string{first, replacement, third}) {
+		t.Fatalf("after replace, keys = %v", got)
+	}
+	var out settingsJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.SearchAPIs) != 1 || len(out.SearchAPIs[0].KeyList) != 3 || out.SearchAPIs[0].KeyList[1].Key != provider.MaskSearchKey(replacement) || out.SearchAPIs[0].KeyList[1].ID != provider.KeyID(replacement) {
+		t.Fatalf("settings keyList = %+v (err %v)", out.SearchAPIs, err)
+	}
+	if rec := post(map[string]any{"ref": provider.KeyID(replacement), "key": replacement}); rec.Code != 200 {
+		t.Fatalf("same key: %d %s", rec.Code, rec.Body)
+	}
+	before := slices.Clone(provider.StoredSearchAPIs())
+	for _, bad := range []map[string]any{
+		{"ref": provider.KeyID(replacement), "key": " "},
+		{"ref": provider.KeyID(second), "key": "x"},
+		{"ref": provider.KeyID(second), "remove": true},
+	} {
+		if rec := post(bad); rec.Code < 400 {
+			t.Errorf("bad edit taken: %d", rec.Code)
+		}
+	}
+	if got := provider.StoredSearchAPIs(); !slices.Equal(got, before) {
+		t.Fatalf("bad edits changed keys: %v", got)
+	}
+	for _, key := range []string{first, replacement, third} {
+		if rec := post(map[string]any{"ref": provider.KeyID(key), "remove": true}); rec.Code != 200 {
+			t.Fatalf("remove: %d %s", rec.Code, rec.Body)
+		}
+	}
+	if as := provider.StoredSearchAPIs(); len(as) != 0 {
+		t.Fatalf("after removing every key of Exa, stored = %+v", as)
 	}
 }

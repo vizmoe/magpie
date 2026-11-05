@@ -20,6 +20,7 @@ import (
 
 // SearchKeyQuota is what one key of a search API has used of its limit.
 type SearchKeyQuota struct {
+	ID  string `json:"id,omitempty"`
 	Key string `json:"key"` // masked (provider.MaskSearchKey)
 	// Known: Used and Limit were read. Unlimited: read, and the key and
 	// its plan have no limit (Used is what the key has used).
@@ -135,6 +136,25 @@ func CanReadSearchQuota(a provider.SearchAPI) bool {
 	return a.Vendor == "tavily" && len(a.Keys()) > 0
 }
 
+// SearchKeyStates are a search API's keys as Settings shows them: each
+// masked, with why and until when it rests if a search set it aside lately.
+func SearchKeyStates(a provider.SearchAPI) []SearchKeyQuota {
+	keys := a.Keys()
+	if len(keys) == 0 {
+		return nil
+	}
+	now := time.Now()
+	out := make([]SearchKeyQuota, len(keys))
+	for i, k := range keys {
+		q := SearchKeyQuota{ID: provider.KeyID(k), Key: provider.MaskSearchKey(k)}
+		if r, ok := searchKeyRest(a.Vendor, k, now); ok {
+			q.Resting, q.RestUntil = r.Why, r.Until
+		}
+		out[i] = q
+	}
+	return out
+}
+
 // SearchQuotas reads what each of a search API's keys has left, in the
 // order of its keys, nil for an API magpie can't ask (CanReadSearchQuota).
 // A read newer than searchQuotaKeep is used again unless fresh is set. A
@@ -171,7 +191,7 @@ func searchQuota(ctx context.Context, a provider.SearchAPI, key string, fresh bo
 		msg := strings.ReplaceAll(err.Error(), key, provider.MaskSearchKey(key))
 		q = SearchKeyQuota{Err: msg}
 	}
-	q.Key = provider.MaskSearchKey(key)
+	q.ID, q.Key = provider.KeyID(key), provider.MaskSearchKey(key)
 	searchQuotas.Store(id, keptQuota{time.Now(), q})
 	switch {
 	case q.UsedUp:

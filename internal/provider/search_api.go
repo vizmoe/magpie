@@ -258,7 +258,13 @@ func StoredSearchAPIs() []SearchAPI { return load().Searches }
 // where it is; a change with no key keeps the key it has, and one with no
 // Pick the pick it has ("turns" puts the default back). One switched off
 // stays off.
-func SetSearchAPI(a SearchAPI) error {
+func SetSearchAPI(a SearchAPI) error { return setSearchAPI(a, false) }
+
+// AddSearchAPI is SetSearchAPI, except that a key given for an API that
+// already has one is added after its keys rather than replacing them (#4597).
+func AddSearchAPI(a SearchAPI) error { return setSearchAPI(a, true) }
+
+func setSearchAPI(a SearchAPI, addKey bool) error {
 	a.Vendor = strings.ToLower(strings.TrimSpace(a.Vendor))
 	a.Key, a.URL = strings.Join(a.Keys(), ","), strings.TrimSpace(a.URL)
 	pick := strings.ToLower(strings.TrimSpace(a.Pick))
@@ -269,6 +275,8 @@ func SetSearchAPI(a SearchAPI) error {
 	i := slices.IndexFunc(f.Searches, func(x SearchAPI) bool { return x.Vendor == a.Vendor })
 	if i >= 0 && a.Key == "" {
 		a.Key = f.Searches[i].Key
+	} else if i >= 0 && addKey && f.Searches[i].Key != "" {
+		a.Key = strings.Join((SearchAPI{Key: f.Searches[i].Key + "," + a.Key}).Keys(), ",")
 	}
 	if i >= 0 {
 		a.Off = f.Searches[i].Off
@@ -292,6 +300,87 @@ func SetSearchAPI(a SearchAPI) error {
 		f.Searches[i] = a
 	} else {
 		f.Searches = append(f.Searches, a)
+	}
+	return store(f)
+}
+
+func searchKeyAt(keys []string, ref string) int {
+	at := -1
+	for i, key := range keys {
+		if KeyID(key) == ref {
+			if at >= 0 {
+				return -1
+			}
+			at = i
+		}
+	}
+	return at
+}
+
+// KeyOf returns one saved key by its fingerprint, even after its place changes.
+func (a SearchAPI) KeyOf(ref string) (string, error) {
+	keys := a.Keys()
+	at := searchKeyAt(keys, ref)
+	if at < 0 {
+		return "", fmt.Errorf("%s: no such key", a.Name())
+	}
+	return keys[at], nil
+}
+
+// ReplaceSearchAPIKey replaces one key by its fingerprint, keeping its place.
+func ReplaceSearchAPIKey(vendor, ref, key string) error {
+	vendor = strings.ToLower(strings.TrimSpace(vendor))
+	f, err := read()
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(f.Searches, func(x SearchAPI) bool { return x.Vendor == vendor })
+	if i < 0 {
+		return fmt.Errorf("no %s search API is set up", vendor)
+	}
+	keys := f.Searches[i].Keys()
+	at := searchKeyAt(keys, ref)
+	if at < 0 {
+		return fmt.Errorf("%s: no such key", f.Searches[i].Name())
+	}
+	given := (SearchAPI{Key: key}).Keys()
+	if len(given) != 1 {
+		return fmt.Errorf("%s: give exactly one API key", f.Searches[i].Name())
+	}
+	if keys[at] == given[0] {
+		return nil
+	}
+	if slices.Contains(keys, given[0]) {
+		return fmt.Errorf("%s already has this key", f.Searches[i].Name())
+	}
+	keys[at] = given[0]
+	f.Searches[i].Key = strings.Join(keys, ",")
+	return store(f)
+}
+
+// RemoveSearchAPIKey removes one key by its fingerprint; removing the last
+// key of an API that needs one removes the API.
+func RemoveSearchAPIKey(vendor, ref string) error {
+	vendor = strings.ToLower(strings.TrimSpace(vendor))
+	f, err := read()
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(f.Searches, func(x SearchAPI) bool { return x.Vendor == vendor })
+	if i < 0 {
+		return fmt.Errorf("no %s search API is set up", vendor)
+	}
+	keys := f.Searches[i].Keys()
+	at := searchKeyAt(keys, ref)
+	if at < 0 {
+		return fmt.Errorf("%s: no such key", f.Searches[i].Name())
+	}
+	keys = slices.Delete(keys, at, at+1)
+	v, _ := SearchVendorOf(vendor)
+	if len(keys) == 0 && !v.KeyOptional && v.Auth == "" {
+		f.Searches = slices.Delete(f.Searches, i, i+1)
+	} else {
+		f.Searches[i].Key = strings.Join(keys, ",")
 	}
 	return store(f)
 }

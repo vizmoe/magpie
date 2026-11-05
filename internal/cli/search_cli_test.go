@@ -67,6 +67,21 @@ func TestSearchCLI(t *testing.T) {
 	if as := provider.SearchAPIs(); len(as) != 2 || as[0].Vendor != "searxng" {
 		t.Fatalf("after rm %+v", as)
 	}
+	// several keys: rm <api> <n> takes away only key n
+	if err := searchCmd([]string{"add", "brave", "b-1,b-2,b-3"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := searchCmd([]string{"rm", "brave", "2"}); err != nil {
+		t.Fatalf("rm brave 2: %v", err)
+	}
+	if got := provider.SearchAPIs()[1].Keys(); !slices.Equal(got, []string{"b-1", "b-3"}) {
+		t.Fatalf("after rm brave 2: %v", got)
+	}
+	for _, bad := range [][]string{{"rm", "brave", "0"}, {"rm", "brave", "3"}, {"rm", "google", "1"}} {
+		if err := searchCmd(bad); err == nil {
+			t.Errorf("%v taken", bad)
+		}
+	}
 }
 
 // magpie search add you, with no key, adds You.com's free search (#1626).
